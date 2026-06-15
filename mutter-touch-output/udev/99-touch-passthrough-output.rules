@@ -1,0 +1,3 @@
+# Map the virtual touchscreen passthrough device to the external GNOME output.
+# Mutter/libinput reads WL_OUTPUT and should map touches to HDMI-1 with the local patch installed.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ATTRS{name}=="Touch passthrough", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{WL_OUTPUT}="HDMI-1"

@@ -1,0 +1,126 @@
+diff --git a/src/backends/meta-input-mapper.c b/src/backends/meta-input-mapper.c
+index 5936d2762f..a124ccfc24 100644
+--- a/src/backends/meta-input-mapper.c
++++ b/src/backends/meta-input-mapper.c
+@@ -25,6 +25,7 @@
+ #include "backends/meta-monitor-manager-private.h"
+ #include "backends/meta-logical-monitor-private.h"
+ #include "backends/meta-backend-private.h"
++#include "backends/native/meta-input-thread.h"
+ 
+ #include "meta-dbus-input-mapping.h"
+ 
+@@ -69,6 +70,7 @@ typedef enum
+   META_MATCH_EDID_FULL,    /* Full EDID model match, eg. "Cintiq 12WX" */
+   META_MATCH_SIZE,         /* Size from input device and output match */
+   META_MATCH_IS_BUILTIN,   /* Output is builtin, applies mainly to system-integrated devices */
++  META_MATCH_OUTPUT_NAME,  /* Output name provided by libinput/udev */
+   META_MATCH_CONFIG,       /* Specified by config */
+   N_OUTPUT_MATCHES
+ } MetaOutputMatchType;
+@@ -392,6 +394,36 @@ match_builtin (MetaInputMapper *mapper,
+   return monitor == meta_monitor_manager_get_builtin_monitor (mapper->monitor_manager);
+ }
+ 
++static gboolean
++match_output_name (MetaMapperInputInfo *input,
++                   MetaMonitor         *monitor)
++{
++  const char *output_name;
++  MetaOutput *output;
++
++  if (!META_IS_INPUT_DEVICE_NATIVE (input->device))
++    {
++      g_warning ("TOUCH_OUTPUT: '%s' is not a native device",
++                 clutter_input_device_get_device_name (input->device));
++      return FALSE;
++    }
++
++  output_name = meta_input_device_native_get_output_name (input->device);
++  if (!output_name)
++    {
++      g_warning ("TOUCH_OUTPUT: output_name NULL for '%s'",
++                 clutter_input_device_get_device_name (input->device));
++      return FALSE;
++    }
++
++  output = meta_monitor_get_main_output (monitor);
++
++  g_warning ("TOUCH_OUTPUT: '%s' WL_OUTPUT='%s' vs monitor='%s'",
++             clutter_input_device_get_device_name (input->device),
++             output_name, meta_output_get_name (output));
++  return g_strcmp0 (meta_output_get_name (output), output_name) == 0;
++}
++
+ static gboolean
+ monitor_has_twin (MetaMonitor *monitor,
+                   GList       *monitors)
+@@ -518,6 +550,13 @@ guess_candidates (MetaInputMapper     *mapper,
+       if (automatic && builtin && match_builtin (mapper, l->data))
+         match.score |= 1 << META_MATCH_IS_BUILTIN;
+ 
++      if (automatic && match_output_name (input, l->data))
++        {
++          g_warning ("TOUCH_OUTPUT: MATCHED monitor '%s' via output name",
++                     meta_monitor_get_display_name (l->data));
++          match.score |= 1 << META_MATCH_OUTPUT_NAME;
++        }
++
+       if (!automatic && match_config (input, l->data, monitors))
+         match.score |= 1 << META_MATCH_CONFIG;
+ 
+@@ -527,6 +566,9 @@ guess_candidates (MetaInputMapper     *mapper,
+ 
+   if (info->matches->len == 0)
+     {
++      g_warning ("TOUCH_OUTPUT: no matches for '%s' (type=%d), fallback to built-in",
++                 clutter_input_device_get_device_name (input->device),
++                 clutter_input_device_get_device_type (input->device));
+       if (clutter_input_device_get_device_type (input->device) ==
+           CLUTTER_TOUCHSCREEN_DEVICE)
+         {
+diff --git a/src/backends/native/meta-input-device-native.c b/src/backends/native/meta-input-device-native.c
+index 51b627f4a7..c86243b590 100644
+--- a/src/backends/native/meta-input-device-native.c
++++ b/src/backends/native/meta-input-device-native.c
+@@ -221,6 +221,27 @@ meta_input_device_native_get_dimensions (ClutterInputDevice *device,
+   return FALSE;
+ }
+ 
++const char *
++meta_input_device_native_get_output_name (ClutterInputDevice *device)
++{
++  MetaInputDeviceNative *device_native = META_INPUT_DEVICE_NATIVE (device);
++  const char *name;
++
++  if (!device_native->libinput_device)
++    {
++      g_warning ("TOUCH_OUTPUT: no libinput_device for '%s'",
++                 clutter_input_device_get_device_name (device));
++      return NULL;
++    }
++
++  name = libinput_device_get_output_name (device_native->libinput_device);
++
++  g_warning ("TOUCH_OUTPUT: device '%s' -> WL_OUTPUT='%s'",
++             clutter_input_device_get_device_name (device),
++             name ? name : "(null)");
++  return name;
++}
++
+ static MetaSeatImpl *
+ seat_impl_from_device_native (MetaInputDeviceNative *device_native)
+ {
+diff --git a/src/backends/native/meta-input-device-native.h b/src/backends/native/meta-input-device-native.h
+index 3b0d3baa81..80c8683938 100644
+--- a/src/backends/native/meta-input-device-native.h
++++ b/src/backends/native/meta-input-device-native.h
+@@ -160,6 +160,8 @@ void                      meta_input_device_native_a11y_maybe_notify_toggle_keys
+ 
+ struct libinput_device * meta_input_device_native_get_libinput_device (ClutterInputDevice *device);
+ 
++const char *            meta_input_device_native_get_output_name (ClutterInputDevice *device);
++
+ gboolean                 meta_input_device_native_process_kbd_a11y_event_in_impl (MetaInputDeviceNative *device_native,
+                                                                                    ClutterEvent       *event);
+ void                     meta_input_device_native_detach_libinput_in_impl (MetaInputDeviceNative *device_native);
